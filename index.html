@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workout Sessions</title>
+    <link rel="stylesheet" href="style.css">
+    <meta http-equiv="Cache-Control" content="no-store" />
+    <style>
+        /* Button styles for a nicer look */
+        .btn {
+            cursor: pointer;
+            font-weight: 600;
+            border-radius: 8px;
+            border: none;
+            padding: 8px 14px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+            transition: transform .08s ease, box-shadow .12s ease, opacity .12s;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+        }
+        .btn:active { transform: translateY(1px); }
+        .btn-primary {
+            background: linear-gradient(180deg, #4f46e5, #4338ca);
+            color: white;
+            box-shadow: 0 6px 18px rgba(79,70,229,0.18);
+        }
+        .btn-primary:hover { opacity: 0.96; }
+        .btn-secondary {
+            background: #ffffff;
+            color: #374151;
+            border: 1px solid #e5e7eb;
+            box-shadow: none;
+        }
+        .btn-secondary:hover { background: #f8fafc; }
+
+        /* Slightly nicer plan option buttons */
+        .plan-option {
+            padding: 10px 12px;
+            border-radius: 6px;
+            background: #fbfdff;
+            border: 1px solid #eef2ff;
+            cursor: pointer;
+            text-align: left;
+            font-weight: 600;
+        }
+        .plan-option:hover { background: #f1f5ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Choose Your Workout Session</h1>
+        <div class="sessions-grid" id="sessionsGrid">
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+
+    <!-- Footer with current plan and change button -->
+    <div class="plan-footer" style="text-align:center; margin: 20px 0;">
+        Current plan: <strong id="currentPlanLabel"></strong>
+        <button id="changePlanBtn" class="btn btn-primary" style="margin-left:12px;">Change Plan</button>
+        <button id="exportStorageBtn" class="btn btn-secondary" style="margin-left:12px;">Export Local Storage</button>
+    </div>
+
+    <!-- Modal for plan selection -->
+    <div id="planModal" class="modal" aria-hidden="true" style="display:none; position:fixed; inset:0; z-index:1000;">
+        <div id="planModalOverlay" style="position:absolute; inset:0; background:rgba(0,0,0,0.5);"></div>
+        <div class="modal-content" style="position:relative; max-width:480px; margin:80px auto; background:#fff; padding:20px; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.2); z-index:1001;">
+            <h2 style="margin-top:0;">Select a Workout Plan</h2>
+            <div id="planList" style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;"></div>
+            <div style="text-align:right;"><button id="closePlanModal" class="btn btn-secondary">Close</button></div>
+        </div>
+    </div>
+
+    <script>
+        // Use the functions exposed by script.js to show plan chooser and persist selection
+        const changeBtn = document.getElementById('changePlanBtn');
+        const currentLabel = document.getElementById('currentPlanLabel');
+        const planModal = document.getElementById('planModal');
+        const planList = document.getElementById('planList');
+        const planOverlay = document.getElementById('planModalOverlay');
+        const closeBtn = document.getElementById('closePlanModal');
+
+        // Ensure label is set on load (script.js's render sets this too but do a safe fallback)
+        if (typeof getPlanNames === 'function') {
+            const plans = getPlanNames();
+            const lastIdx = localStorage.getItem('lastPlanIndex');
+            const idx = lastIdx !== null ? parseInt(lastIdx, 10) : 0;
+            if (currentLabel) currentLabel.textContent = plans[idx] || plans[0] || '';
+        }
+
+        function openModal() {
+            planList.innerHTML = '';
+            const plans = (typeof getPlanNames === 'function') ? getPlanNames() : [];
+            if (plans.length === 0) {
+                const msg = document.createElement('div');
+                msg.textContent = 'No plans available';
+                planList.appendChild(msg);
+            } else {
+                plans.forEach((p, i) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'plan-option';
+                    btn.textContent = p;
+                    btn.style.padding = '8px 10px';
+                    btn.style.textAlign = 'left';
+                    btn.style.border = '1px solid #ddd';
+                    btn.style.borderRadius = '4px';
+                    btn.style.background = '#f8f8f8';
+                    btn.addEventListener('click', () => {
+                        if (typeof saveLastPlanIndex === 'function') saveLastPlanIndex(i);
+                        if (typeof renderSessionsForPlan === 'function') renderSessionsForPlan(i);
+                        if (currentLabel) currentLabel.textContent = p;
+                        closeModal();
+                    });
+                    planList.appendChild(btn);
+                });
+            }
+            planModal.style.display = 'block';
+            planModal.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeModal() {
+            planModal.style.display = 'none';
+            planModal.setAttribute('aria-hidden', 'true');
+        }
+
+        changeBtn.addEventListener('click', () => {
+            if (typeof getPlanNames !== 'function') return alert('Plan selection unavailable');
+            openModal();
+        });
+
+        planOverlay.addEventListener('click', closeModal);
+        closeBtn.addEventListener('click', closeModal);
+
+        // close on escape
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeModal();
+        });
+
+        // Export localStorage to clipboard
+        const exportBtn = document.getElementById('exportStorageBtn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => {
+                try {
+                    const data = {};
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        data[key] = localStorage.getItem(key);
+                    }
+                    const json = JSON.stringify(data, null, 2);
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(json).then(() => {
+                            alert('Local storage copied to clipboard');
+                        }).catch((err) => {
+                            throw err;
+                        });
+                    } else {
+                        const ta = document.createElement('textarea');
+                        ta.value = json;
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                        alert('Local storage copied to clipboard');
+                    }
+                } catch (err) {
+                    alert('Failed to copy local storage: ' + (err && err.message ? err.message : err));
+                }
+            });
+        }
+    </script>
+</body>
+</html>

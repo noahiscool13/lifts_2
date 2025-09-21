@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workout Session</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+
+    <!-- Styles for the info button and modal -->
+    <style>
+        .info-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #007bff;
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            margin-left: 8px;
+            border: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            font-size: 16px;
+        }
+        .info-btn:focus { outline: 2px solid rgba(0,123,255,0.4); }
+
+        /* Exercise info modal (simple) */
+        .exercise-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 50; }
+        .exercise-modal .modal-content { background: #fff; padding: 16px; width: 90%; max-width: 700px; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.3); }
+        .exercise-modal .modal-header { display:flex; align-items:center; justify-content:space-between; }
+        .exercise-modal h3 { margin: 0 0 8px 0; }
+        .exercise-modal .modal-body { max-height: 60vh; overflow:auto; }
+        .exercise-modal .video-container { margin-top: 12px; }
+        .exercise-modal .close-btn { background: transparent; border: none; font-size: 20px; cursor: pointer; }
+        .exercise-modal iframe, .exercise-modal video { width: 100%; height: 360px; border-radius: 6px; }
+
+        /* Ensure exercise button layout has space for info button */
+        .exercise-btn { display:flex; align-items:center; justify-content:space-between; gap: 8px; }
+        .exercise-btn .exercise-name { flex: 1; text-align: left; }
+
+        /* Body-part badges inside exercise modal */
+        .bodypart-badges { margin-top: 8px; display:flex; flex-wrap:wrap; gap:8px; }
+        .bodypart-badges .badge { background:#eef2ff; color:#1e3a8a; padding:6px 10px; border-radius:999px; font-size:13px; font-weight:600; box-shadow:0 1px 2px rgba(0,0,0,0.06); }
+        .bodypart-badges .badge[aria-hidden="true"] { opacity:0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button class="top-back-btn" id="back-page-btn" title="Back to sessions">←</button>
+        <div class="session-header">
+            <h1 id="session-title"></h1>
+        </div>
+        
+        <div class="exercise-card">
+            <div style="display:flex; align-items:center; gap:8px;">
+                <h2 id="current-exercise"></h2>
+                <button class="info-btn" id="exercise-info-btn" title="Show exercise info">?</button>
+            </div>
+             <div class="set-info">
+                 <span id="current-set"></span>
+                 <span id="target-reps"></span>
+                 <span id="weight-kg"></span>
+                <button class="info-btn" id="change-weight-btn" title="Change weight">✎</button>
+             </div>
+
+            <div class="recent-sets" id="recent-sets">
+                <!-- Completed set reps will appear here as small chips -->
+            </div>
+            
+            <div class="action-buttons">
+                <button class="success-btn" id="success-btn">As prescribed</button>
+                <button class="fail-btn" id="fail-btn">Different number of reps</button>
+                <button class="back-btn" id="back-set-btn">Back 1 Set</button>
+            </div>
+        </div>
+
+        <div class="rest-timer" id="rest-timer" style="display: none;">
+            <h3>Rest Period</h3>
+            <div class="timer-display" id="timer-display">00:00</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+        </div>
+
+        <div class="exercise-list">
+            <h3>Exercises</h3>
+            <div class="exercise-scroll" id="exercise-scroll">
+                <!-- Exercise buttons will be generated here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for fail input -->
+    <div class="modal" id="fail-modal" style="display: none;">
+        <div class="modal-content">
+            <h3>How many reps did you complete?</h3>
+            <input type="number" id="reps-input" min="0" placeholder="Enter reps">
+            <div class="modal-buttons">
+                <button class="modal-btn" id="confirm-fail">Confirm</button>
+                <button class="modal-btn cancel" id="cancel-fail">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Exercise info modal -->
+    <div class="exercise-modal" id="exercise-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="exercise-modal-title">Exercise</h3>
+                <button class="close-btn" id="exercise-modal-close" title="Close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div id="exercise-modal-desc"></div>
+                <div class="video-container" id="exercise-modal-video"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // If a plan index is provided in the URL (index.html now includes &plan=), use that plan's sessions
+        (function() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const planParam = params.get('plan');
+                if (planParam !== null) {
+                    const planIdx = parseInt(planParam, 10);
+                    if (Number.isInteger(planIdx) && Array.isArray(allWorkoutPlans) && planIdx >= 0 && planIdx < allWorkoutPlans.length) {
+                        sessionList = allWorkoutPlans[planIdx].sessions;
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not apply plan param:', e);
+            }
+        })();
+
+        class SessionManager {
+            constructor() {
+                this.sessionId = new URLSearchParams(window.location.search).get('id');
+                this.session = sessionList[this.sessionId];
+                this.currentExerciseIndex = 0;
+                this.currentSet = 1;
+                this.sessionData = {};
+                this.restTimer = null;
+                
+                this.initializeSession();
+                this.bindEvents();
+                this.updateDisplay();
+            }
+
+            initializeSession() {
+                // Initialize session data for each exercise
+                this.session.exercises.forEach((exercise, index) => {
+                    const [weight, reps] = exercise.getNextSession();
+                    this.sessionData[index] = {
+                        weight: weight,
+                        targetReps: reps,
+                        completedSets: [],
+                        currentSet: 1
+                    };
+                });
+            }
+
+            bindEvents() {
+                document.getElementById('success-btn').addEventListener('click', () => this.handleSuccess());
+                document.getElementById('fail-btn').addEventListener('click', () => this.handleFail());
+                document.getElementById('confirm-fail').addEventListener('click', () => this.confirmFail());
+                document.getElementById('cancel-fail').addEventListener('click', () => this.cancelFail());
+                document.getElementById('back-set-btn').addEventListener('click', () => this.backOneSet());
+                const exerciseInfoBtn = document.getElementById('exercise-info-btn');
+                if (exerciseInfoBtn) exerciseInfoBtn.addEventListener('click', () => this.showExerciseInfo(this.currentExerciseIndex));
+                const changeWeightBtn = document.getElementById('change-weight-btn');
+                if (changeWeightBtn) changeWeightBtn.addEventListener('click', () => this.showChangeWeightPrompt());
+                // top-left page back button
+                const pageBack = document.getElementById('back-page-btn');
+                if (pageBack) pageBack.addEventListener('click', () => { window.location.href = 'index.html'; });
+            }
+
+            updateDisplay() {
+                const currentExercise = this.session.exercises[this.currentExerciseIndex];
+                const exerciseData = this.sessionData[this.currentExerciseIndex];
+                
+                // Update session title
+                document.getElementById('session-title').textContent = this.session.title;
+                
+                // Update current exercise
+                document.getElementById('current-exercise').textContent = currentExercise.title;
+                
+                // Update set info
+                document.getElementById('current-set').textContent = `Set ${exerciseData.currentSet} of ${currentExercise.sets}`;
+                const target = exerciseData.targetReps[exerciseData.currentSet - 1];
+                const isLastSet = exerciseData.currentSet === currentExercise.sets;
+                document.getElementById('target-reps').textContent = `Target: ${target}${isLastSet ? '+' : ''} reps`;
+                document.getElementById('weight-kg').textContent = `Weight: ${exerciseData.weight} kg`;
+                
+                // Update recent sets display
+                this.updateRecentSetsDisplay();
+
+                // Show back button only when there are completed sets
+                const backBtn = document.getElementById('back-set-btn');
+                if (exerciseData.completedSets.length > 0) {
+                    backBtn.style.display = 'inline-block';
+                } else {
+                    backBtn.style.display = 'none';
+                }
+                
+                // Update exercise list
+                this.updateExerciseList();
+            }
+
+            updateRecentSetsDisplay() {
+                const recentSetsDiv = document.getElementById('recent-sets');
+                recentSetsDiv.innerHTML = '';
+                
+                const exerciseData = this.sessionData[this.currentExerciseIndex];
+                exerciseData.completedSets.forEach(reps => {
+                    const chip = document.createElement('span');
+                    chip.className = 'set-chip';
+                    chip.textContent = `${reps} reps`;
+                    recentSetsDiv.appendChild(chip);
+                });
+            }
+
+            updateExerciseList() {
+                const exerciseScroll = document.getElementById('exercise-scroll');
+                exerciseScroll.innerHTML = '';
+                
+                this.session.exercises.forEach((exercise, index) => {
+                    const button = document.createElement('button');
+                    // ensure button won't submit forms and store its index for easy lookup
+                    button.type = 'button';
+                    button.dataset.index = index;
+                    button.className = 'exercise-btn';
+                    if (index === this.currentExerciseIndex) {
+                        button.classList.add('active');
+                    }
+                    
+                    const completedSets = this.sessionData[index].completedSets.length;
+                    // main content
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'exercise-name';
+                    nameSpan.textContent = exercise.title;
+
+                    const progressSpan = document.createElement('span');
+                    progressSpan.className = 'exercise-progress';
+                    progressSpan.textContent = `${completedSets}/${exercise.sets}`;
+
+                    // assemble
+                    button.appendChild(nameSpan);
+                    button.appendChild(progressSpan);
+
+                    button.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        this.jumpToExercise(index);
+                    });
+                    exerciseScroll.appendChild(button);
+                });
+            }
+
+            // Jump to a specific exercise in the session
+            jumpToExercise(index) {
+                if (typeof index !== 'number' || index < 0 || index >= this.session.exercises.length) return;
+
+                // Clear any running rest timer
+                if (this.restTimer) {
+                    clearInterval(this.restTimer);
+                    this.restTimer = null;
+                    const timerElement = document.getElementById('rest-timer');
+                    const progressElement = document.getElementById('progress-fill');
+                    if (timerElement) timerElement.style.display = 'none';
+                    if (progressElement) progressElement.style.width = '0%';
+                }
+
+                // Switch current exercise index and reset current set if needed
+                this.currentExerciseIndex = index;
+                const exerciseData = this.sessionData[this.currentExerciseIndex];
+                if (exerciseData && (!exerciseData.currentSet || exerciseData.currentSet < 1)) {
+                    exerciseData.currentSet = 1;
+                }
+
+                this.updateDisplay();
+                
+                // After the DOM updates, scroll the selected exercise button into view in the list
+                const exerciseScroll = document.getElementById('exercise-scroll');
+                if (exerciseScroll) {
+                    // Prefer selecting the button by data-index, fallback to child at same index
+                    const btn = exerciseScroll.querySelector(`.exercise-btn[data-index="${index}"]`) || exerciseScroll.children[index];
+                    if (btn && typeof btn.scrollIntoView === 'function') {
+                        // Use smooth scrolling and keep it near the visible area
+                        btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+                    }
+                }
+            }
+
+            // Show exercise description and optional video inside modal
+            showExerciseInfo(index) {
+                const exercise = this.session.exercises[index];
+                const titleEl = document.getElementById('exercise-modal-title');
+                const descEl = document.getElementById('exercise-modal-desc');
+                const videoEl = document.getElementById('exercise-modal-video');
+
+                titleEl.textContent = exercise.title || 'Exercise';
+                descEl.innerHTML = '';
+                videoEl.innerHTML = '';
+
+                // Description (if present)
+                if (exercise.description) {
+                    const p = document.createElement('p');
+                    p.textContent = exercise.description;
+                    descEl.appendChild(p);
+                } else {
+                    const p = document.createElement('p');
+                    p.textContent = 'No description available.';
+                    descEl.appendChild(p);
+                }
+
+                // Body-part badges (if provided)
+                if (Array.isArray(exercise.bodyParts) && exercise.bodyParts.length > 0) {
+                    const badges = document.createElement('div');
+                    badges.className = 'bodypart-badges';
+                    badges.setAttribute('aria-label', 'Primary body parts trained');
+                    exercise.bodyParts.forEach(part => {
+                        const span = document.createElement('span');
+                        span.className = 'badge';
+                        span.textContent = part;
+                        span.setAttribute('aria-hidden', 'true');
+                        badges.appendChild(span);
+                    });
+                    descEl.appendChild(badges);
+                }
+
+                // Video handling: support common property names: video, videoUrl, videoURL
+                const videoUrl = exercise.video || exercise.videoUrl || exercise.videoURL || exercise.video_id || null;
+                if (videoUrl) {
+                    // If it's a YouTube URL or id, embed iframe. Detect youtube strings or numeric id patterns.
+                    const lower = String(videoUrl).toLowerCase();
+                    if (lower.includes('youtube') || lower.includes('youtu.be') || /^[a-zA-Z0-9_-]{11}$/.test(videoUrl)) {
+                        // if a bare id is provided, use it; otherwise try to extract id
+                        let videoId = videoUrl;
+                        if (videoUrl.includes('youtube')) {
+                            const m = videoUrl.match(/[?&]v=([^&]+)/);
+                            if (m && m[1]) videoId = m[1];
+                            else {
+                                const short = videoUrl.match(/youtu\.be\/([^?&]+)/);
+                                if (short && short[1]) videoId = short[1];
+                            }
+                        } else if (videoUrl.includes('youtu.be/')) {
+                            const short = videoUrl.match(/youtu\.be\/([^?&]+)/);
+                            if (short && short[1]) videoId = short[1];
+                        }
+                        // Build embed URL and include mute parameter so embedded playback is muted
+                        let embedUrl = `https://www.youtube.com/embed/${videoId}`;
+                        const params = new URLSearchParams({ rel: '0', modestbranding: '1', mute: '1' });
+                        embedUrl += `?${params.toString()}`;
+                        const iframe = document.createElement('iframe');
+                        iframe.src = embedUrl;
+                        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+                        iframe.allowFullscreen = true;
+                        videoEl.appendChild(iframe);
+                    } else if (videoUrl.endsWith('.mp4') || videoUrl.endsWith('.webm') || videoUrl.endsWith('.ogg')) {
+                        const vid = document.createElement('video');
+                        vid.controls = true;
+                        vid.muted = true; // ensure muted
+                        vid.src = videoUrl;
+                        videoEl.appendChild(vid);
+                    } else {
+                        // fallback: try to embed via iframe URL
+                        // Attempt to add mute param if possible
+                        try {
+                            const url = new URL(videoUrl);
+                            url.searchParams.set('mute', '1');
+                            const iframe = document.createElement('iframe');
+                            iframe.src = url.toString();
+                            iframe.allowFullscreen = true;
+                            videoEl.appendChild(iframe);
+                        } catch (e) {
+                            // Not a valid URL string - just create iframe
+                            const iframe = document.createElement('iframe');
+                            iframe.src = videoUrl;
+                            iframe.allowFullscreen = true;
+                            videoEl.appendChild(iframe);
+                        }
+                    }
+                }
+
+                // show modal
+                const modal = document.getElementById('exercise-modal');
+                modal.style.display = 'flex';
+
+                // attach close handler (one-time safe attach)
+                const closeBtn = document.getElementById('exercise-modal-close');
+                closeBtn.onclick = () => this.closeExerciseModal();
+
+                // close when clicking outside content
+                modal.onclick = (e) => {
+                    if (e.target === modal) this.closeExerciseModal();
+                };
+            }
+
+            closeExerciseModal() {
+                const modal = document.getElementById('exercise-modal');
+                const videoEl = document.getElementById('exercise-modal-video');
+                modal.style.display = 'none';
+                // stop any playing iframe/video by clearing src
+                Array.from(videoEl.children).forEach(child => {
+                    if (child.tagName === 'IFRAME') child.src = '';
+                    if (child.tagName === 'VIDEO') child.pause();
+                });
+                videoEl.innerHTML = '';
+            }
+
+            handleSuccess() {
+                const currentExercise = this.session.exercises[this.currentExerciseIndex];
+                const exerciseData = this.sessionData[this.currentExerciseIndex];
+                const targetReps = exerciseData.targetReps[exerciseData.currentSet - 1];
+                
+                this.completeSet(targetReps);
+            }
+
+            handleFail() {
+                document.getElementById('fail-modal').style.display = 'flex';
+                document.getElementById('reps-input').value = '';
+                document.getElementById('reps-input').focus();
+            }
+
+            confirmFail() {
+                const repsInput = document.getElementById('reps-input');
+                const reps = parseInt(repsInput.value);
+                
+                if (repsInput.value.trim() === '') {
+                    // User closed the input without confirming, just hide the modal
+                  document.getElementById('fail-modal').style.display = 'none';
+                  return;
+                }
+
+                // Validate the input value
+                if (isNaN(reps) || reps < 0) {
+                    Swal.fire({ icon: 'error', title: 'Invalid input', text: 'Please enter a valid number of reps.' });
+                    return;
+                }
+
+                // If valid, proceed with the fail confirmation
+                this.completeSet(reps);
+                document.getElementById('fail-modal').style.display = 'none';
+            }
+
+            cancelFail() {
+                // Simply hide the modal without validation
+                document.getElementById('fail-modal').style.display = 'none';
+            }
+
+            completeSet(reps) {
+                const currentExercise = this.session.exercises[this.currentExerciseIndex];
+                const exerciseData = this.sessionData[this.currentExerciseIndex];
+                
+                // Record the completed set
+                exerciseData.completedSets.push(reps);
+                
+                // Check if all sets are completed for this exercise
+                if (exerciseData.completedSets.length >= currentExercise.sets) {
+                    this.completeExercise();
+                } else {
+                    exerciseData.currentSet++;
+                    this.startRestTimer();
+                }
+                
+                this.updateDisplay();
+            }
+
+            completeExercise() {
+                const currentExercise = this.session.exercises[this.currentExerciseIndex];
+                const exerciseData = this.sessionData[this.currentExerciseIndex];
+                
+                // Save the session data
+                currentExercise.saveSession(exerciseData.weight, exerciseData.completedSets);
+                
+                // Move to next exercise or complete session
+                if (this.currentExerciseIndex < this.session.exercises.length - 1) {
+                    this.currentExerciseIndex++;
+                    this.updateDisplay();
+
+                    // Scroll the newly selected exercise into view in the list
+                    const exerciseScroll = document.getElementById('exercise-scroll');
+                    if (exerciseScroll) {
+                        const btn = exerciseScroll.querySelector(`.exercise-btn[data-index="${this.currentExerciseIndex}"]`) || exerciseScroll.children[this.currentExerciseIndex];
+                        if (btn && typeof btn.scrollIntoView === 'function') {
+                            btn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+                        }
+                    }
+                } else {
+                    this.completeSession();
+                }
+            }
+
+            completeSession() {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Session completed!',
+                    text: 'Great work!',
+                    confirmButtonText: 'OK'
+                }).then(() => {
+                    window.location.href = 'index.html';
+                });
+            }
+
+            startRestTimer() {
+                 const currentExercise = this.session.exercises[this.currentExerciseIndex];
+                 const restPeriod = currentExercise.restPeriod; // in seconds
+                 
+                 const timerElement = document.getElementById('rest-timer');
+                 const displayElement = document.getElementById('timer-display');
+                 const progressElement = document.getElementById('progress-fill');
+                 
+                // clear any existing timer (safety) before starting
+                if (this.restTimer) {
+                    clearInterval(this.restTimer);
+                    this.restTimer = null;
+                }
+
+                timerElement.style.display = 'block';
+                
+                let timeLeft = restPeriod;
+                this.updateTimerDisplay(timeLeft);
+                
+                this.restTimer = setInterval(() => {
+                    timeLeft--;
+                    this.updateTimerDisplay(timeLeft);
+                    
+                    const progress = ((restPeriod - timeLeft) / restPeriod) * 100;
+                    progressElement.style.width = progress + '%';
+                    
+                    if (timeLeft <= 0) {
+                        clearInterval(this.restTimer);
+                        this.restTimer = null;
+                        timerElement.style.display = 'none';
+                        progressElement.style.width = '0%';
+                    }
+                }, 1000);
+            }
+
+            updateTimerDisplay(seconds) {
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                const display = `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+                document.getElementById('timer-display').textContent = display;
+            }
+
+            backOneSet() {
+                const exerciseData = this.sessionData[this.currentExerciseIndex];
+                
+                // Only allow going back if there's at least one completed set
+                if (exerciseData.completedSets.length > 0) {
+                    // Remove the last completed set
+                    exerciseData.completedSets.pop();
+
+                    // Decrement the current set counter but don't go below 1
+                    if (exerciseData.currentSet > 1) {
+                        exerciseData.currentSet--;
+                    }
+
+                    // Clear any running rest timer and hide timer UI
+                    if (this.restTimer) {
+                        clearInterval(this.restTimer);
+                        this.restTimer = null;
+                    }
+                    const timerElement = document.getElementById('rest-timer');
+                    const progressElement = document.getElementById('progress-fill');
+                    timerElement.style.display = 'none';
+                    progressElement.style.width = '0%';
+
+                    // Refresh the display
+                    this.updateDisplay();
+                }
+            }
+
+            // Show change weight prompt
+            showChangeWeightPrompt() {
+                const exerciseData = this.sessionData[this.currentExerciseIndex];
+                const currentWeight = (exerciseData && typeof exerciseData.weight !== 'undefined') ? exerciseData.weight : 0;
+
+                Swal.fire({
+                    title: 'Change weight (kg)',
+                    input: 'number',
+                    inputAttributes: { min: 0, step: 0.001},
+                    inputValue: currentWeight,
+                    showCancelButton: true,
+                    confirmButtonText: 'Save',
+                    preConfirm: (value) => {
+                        const v = parseFloat(value);
+                        if (isNaN(v) || v < 0) {
+                            Swal.showValidationMessage('Please enter a valid non-negative number');
+                        }
+                        return v;
+                    }
+                }).then((result) => {
+                    if (result.isConfirmed) {
+                        let newWeight = result.value;
+                        const currentExercise = this.session.exercises[this.currentExerciseIndex];
+                        newWeight = currentExercise.availableWeights.closest(newWeight);
+                        this.sessionData[this.currentExerciseIndex].weight = newWeight;
+                        this.updateDisplay();
+                    }
+                });
+            }
+        }
+
+        // Initialize the session manager when the page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            new SessionManager();
+        });
+    </script>
+</body>
+</html>
